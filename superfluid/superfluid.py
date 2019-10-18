@@ -1,6 +1,7 @@
 import sys
 import numpy
 from scipy.optimize import root
+from scipy.integrate import quad
 import weno_coefficients
 
 lam = 1  # Coupling coefficient?
@@ -43,8 +44,8 @@ def c2p(q, guess):
     """
 
     j_t_up, s_t_up = q[0:2]
-    sigma_x, sigma_y = q[2:4]
-    Theta_x, Theta_y = q[4:6]
+    Theta_x, Theta_y = q[2:4]
+    sigma_x, sigma_y = q[4:6]
 
     def root_fn(v):
         """
@@ -209,7 +210,7 @@ class WENOSimulation(object):
 #        jy = w[4, :]
 #        sy = w[5, :]
         sigmat = w[6, :]
-#        Thetat = w[7, :]
+        Thetat = w[7, :]
 #        sigmax = w[8, :]
 #        Thetax = w[9, :]
 #        sigmay = w[10, :]
@@ -217,8 +218,67 @@ class WENOSimulation(object):
 
         flux[0, :] = jx
         flux[1, :] = sx
+        flux[2, :] = -Thetat
         flux[4, :] = -sigmat
         return flux
+
+    def B_matrix(self, q):
+        w = c2p(q, self.guess)
+        st = w[1]
+        sx = w[3]
+        sy = w[5]
+        n = len(q)
+        B = numpy.zeros((n, n), dtype=q.dtype)
+        B[2, 3] = - sy / st
+        B[3, 3] = sx / st
+        return B
+
+    def path_psi(self, q_a, q_b, s):
+        return q_a + (q_b - q_a) * s
+
+    def B_tilde(self, q_a, q_b):
+        (result, _) = quad(lambda s: self.B_matrix(self.path_psi(q_a, q_b, s)),
+                           0, 1)
+        return result
+
+    def speeds(self, q_L, q_R):
+        """
+        The minimum and maximum signal speeds in the problem.
+        Relativity, max is c=1, do the very diffusive variant.
+        """
+        return (-1, 1)
+
+    def HLL(self, q_L, q_R):
+        """
+        Path consistent flux based on Dumbser & Balsara JCP 304 (275-319) 2016.
+        """
+        s_L, s_R = self.speeds(q_L, q_R)
+#        f_L = flux(sim, q_L)
+#        f_R = flux(sim, q_R)
+        # Equation (15)
+        q_star_0 = 1 / (s_R - s_L) * \
+                   ( (q_R * s_R - q_L * s_L) -
+#                     (f_R - f_L) -
+                     self.B_tilde(q_L, q_R) @ (q_R - q_L) )
+        # Not doing the iterative step for now
+        q_star = q_star_0
+        # Fluctuations from equations 23
+        D_m = -s_L / (s_R - s_L) * ( #(f_R - f_L) + 
+                                     self.B_tilde(q_L, q_star) @ (q_star - q_L) +
+                                     self.B_tilde(q_star, q_R) @ (q_R - q_star) )+\
+               s_L * s_R / (s_R - s_L) * (q_R - q_L)
+        D_p =  s_R / (s_R - s_L) * ( #(f_R - f_L) +
+                                     self.B_tilde(q_L, q_star) @ (q_star - q_L) +
+                                     self.B_tilde(q_star, q_R) @ (q_R - q_star) )-\
+               s_L * s_R / (s_R - s_L) * (q_R - q_L)
+        # Done
+        # HACK to remove pure flux terms
+        D_m[0:2] = 0
+        D_m[4:] = 0
+        D_p[0:2] = 0
+        D_p[4:] = 0
+        # END HACK
+        return D_m, D_p
 
     def rk_substep(self):
         """RHS terms"""
@@ -235,13 +295,25 @@ class WENOSimulation(object):
         fml[:, -1::-1] = weno(self.weno_order, fm[:, -1::-1])
         flux[:, 1:-1] = fpr[:, 1:-1] + fml[:, 1:-1]
         # --- WARNING!!! ---
-        # Terms with no fluxes (Theta, sigma_y) will pick up diffusive
+        # Terms with no fluxes (Theta_y, sigma_y) will pick up diffusive
         # pieces from the L-F term, so set to zero by hand
-        flux[2:4, :] = 0  # Theta_x, y
+        flux[3, :] = 0  # Theta_y
         flux[5, :] = 0    # sigma_y
         # --- END OF HACK ---
         rhs = g.scratch_array()
         rhs[:, 1:-1] = 1/g.dx * (flux[:, 1:-1] - flux[:, 2:])
+        # Now reconstruct q raw
+        qpr = g.scratch_array()
+        qml = g.scratch_array()
+        qpr[:, 1:] = weno(self.weno_order, self.q[:, :-1])
+        qml[:, -1::-1] = weno(self.weno_order, self.q[:, -1::-1])
+        D_m = g.scratch_array()
+        D_p = g.scratch_array()
+        for i in range(g.ilo-1, g.ihi+1):
+            D_m[:, i], D_p[:, i] = self.HLL(qpr[:, i-1], qml[:, i])
+            # CHECK:
+            # Should there be a B delta Q term here?
+        rhs[:, 1:-1] -= 1/g.dx * (D_m[2:] + D_p[1:-1])
         return rhs
 
     def evolve(self, tmax, reconstruction='componentwise'):
