@@ -189,6 +189,8 @@ class WENOSFSimulation(object):
         self.C = C    # CFL number
         self.weno_order = weno_order
         self.guess = (1, 1)  # This really needs thought.
+        self.nodes, self.weights = numpy.polynomial.legendre.leggauss(3)
+        self.shifted_nodes = (self.nodes + 1) / 2
 
     def init_cond(self, type="const"):
         if type == "const":
@@ -242,12 +244,15 @@ class WENOSFSimulation(object):
     def B_tilde(self, q_a, q_b):
         n = len(q_a)
         B_tilde_matrix = numpy.zeros((n, n), dtype=q_a.dtype)
-        for row in range(n):
-            for col in range(n):
-                (result, _) = quad(lambda s:
-                    self.B_matrix(self.path_psi(q_a, q_b, s))[row, col],
-                           0, 1)
-                B_tilde_matrix[row, col] = result
+#        for row in range(n):
+#            for col in range(n):
+#                (result, _) = quad(lambda s:
+#                    self.B_matrix(self.path_psi(q_a, q_b, s))[row, col],
+#                           0, 1)
+#                B_tilde_matrix[row, col] = result
+        for weight, node in zip(self.weights, self.shifted_nodes):
+            B_tilde_matrix += weight * self.B_matrix(self.path_psi(q_a, q_b,
+                                                                   node))
         return B_tilde_matrix
 
     def speeds(self, q_L, q_R):
