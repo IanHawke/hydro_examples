@@ -188,6 +188,7 @@ class WENOSimulation(object):
         self.t = 0.0  # simulation time
         self.C = C    # CFL number
         self.weno_order = weno_order
+        self.guess = (1, 1)  # This really needs thought.
 
     def init_cond(self, type="const"):
         if type == "const":
@@ -201,8 +202,9 @@ class WENOSimulation(object):
     def timestep(self):
         return self.C * self.grid.dx / self.max_lambda()
 
-    def superfluid_flux(self, q, w):
+    def superfluid_flux(self, q):
         flux = numpy.zeros_like(q)
+        w = c2p(q, self.guess)
 #        jt = w[0, :]
 #        st = w[1, :]
         jx = w[2, :]
@@ -284,7 +286,7 @@ class WENOSimulation(object):
         """RHS terms"""
         g = self.grid
         g.fill_BCs()
-        f = self.euler_flux(g.q)
+        f = self.superfluid_flux(g.q)
         alpha = self.max_lambda()
         fp = (f + alpha * g.q) / 2
         fm = (f - alpha * g.q) / 2
