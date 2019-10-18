@@ -4,7 +4,7 @@ from scipy.optimize import root
 from scipy.integrate import quad
 import weno_coefficients
 
-lam = 1  # Coupling coefficient?
+lam = 0.05  # Coupling coefficient. Larger value from Alford et al 2014
 
 
 def eos_abc(s2, t2, st):
@@ -181,7 +181,7 @@ def weno(order, q):
     return qL
 
 
-class WENOSimulation(object):
+class WENOSFSimulation(object):
 
     def __init__(self, grid, C=0.5, weno_order=3):
         self.grid = grid
@@ -192,9 +192,9 @@ class WENOSimulation(object):
 
     def init_cond(self, type="const"):
         if type == "const":
-            self.grid.q = 0
-            self.grid.q[0] = numpy.ones_like(self.grid.x)
-            self.grid.q[1] = numpy.ones_like(self.grid.x)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
 
     def max_lambda(self):
         return 1
@@ -204,24 +204,25 @@ class WENOSimulation(object):
 
     def superfluid_flux(self, q):
         flux = numpy.zeros_like(q)
-        w = c2p(q, self.guess)
-#        jt = w[0, :]
-#        st = w[1, :]
-        jx = w[2, :]
-        sx = w[3, :]
-#        jy = w[4, :]
-#        sy = w[5, :]
-        sigmat = w[6, :]
-        Thetat = w[7, :]
-#        sigmax = w[8, :]
-#        Thetax = w[9, :]
-#        sigmay = w[10, :]
-#        Thetay = w[11, :]
+        for i in range(0, self.grid.nx+2*self.grid.ng):
+            w = c2p(q[:, i], self.guess)
+    #        jt = w[0, :]
+    #        st = w[1, :]
+            jx = w[2]
+            sx = w[3]
+    #        jy = w[4, :]
+    #        sy = w[5, :]
+            sigmat = w[6]
+            Thetat = w[7]
+    #        sigmax = w[8, :]
+    #        Thetax = w[9, :]
+    #        sigmay = w[10, :]
+    #        Thetay = w[11, :]
 
-        flux[0, :] = jx
-        flux[1, :] = sx
-        flux[2, :] = -Thetat
-        flux[4, :] = -sigmat
+            flux[0, i] = jx
+            flux[1, i] = sx
+            flux[2, i] = -Thetat
+            flux[4, i] = -sigmat
         return flux
 
     def B_matrix(self, q):
@@ -239,9 +240,15 @@ class WENOSimulation(object):
         return q_a + (q_b - q_a) * s
 
     def B_tilde(self, q_a, q_b):
-        (result, _) = quad(lambda s: self.B_matrix(self.path_psi(q_a, q_b, s)),
+        n = len(q_a)
+        B_tilde_matrix = numpy.zeros((n, n), dtype=q_a.dtype)
+        for row in range(n):
+            for col in range(n):
+                (result, _) = quad(lambda s:
+                    self.B_matrix(self.path_psi(q_a, q_b, s))[row, col],
                            0, 1)
-        return result
+                B_tilde_matrix[row, col] = result
+        return B_tilde_matrix
 
     def speeds(self, q_L, q_R):
         """
@@ -307,15 +314,15 @@ class WENOSimulation(object):
         # Now reconstruct q raw
         qpr = g.scratch_array()
         qml = g.scratch_array()
-        qpr[:, 1:] = weno(self.weno_order, self.q[:, :-1])
-        qml[:, -1::-1] = weno(self.weno_order, self.q[:, -1::-1])
+        qpr[:, 1:] = weno(self.weno_order, g.q[:, :-1])
+        qml[:, -1::-1] = weno(self.weno_order, g.q[:, -1::-1])
         D_m = g.scratch_array()
         D_p = g.scratch_array()
         for i in range(g.ilo-1, g.ihi+1):
             D_m[:, i], D_p[:, i] = self.HLL(qpr[:, i-1], qml[:, i])
             # CHECK:
             # Should there be a B delta Q term here?
-        rhs[:, 1:-1] -= 1/g.dx * (D_m[2:] + D_p[1:-1])
+        rhs[:, 1:-1] -= 1/g.dx * (D_m[:, 2:] + D_p[:, 1:-1])
         return rhs
 
     def evolve(self, tmax, reconstruction='componentwise'):
@@ -350,3 +357,19 @@ class WENOSimulation(object):
             g.q = (q_start + 2 * q2 + 2 * dt * stepper()) / 3
 
             self.t += dt
+        # Fill the BCs to finish
+        g.fill_BCs()
+
+
+if __name__ == "__main__":
+    order = 3
+    xmin = -0.5
+    xmax = 0.5
+    nx = 16
+    tmax = 1e-5
+    C = 0.5
+    ng = order+2
+    g = Grid1d(nx, ng, xmin, xmax)
+    s = WENOSFSimulation(g, C, order)
+    s.init_cond()
+    s.evolve(tmax)
