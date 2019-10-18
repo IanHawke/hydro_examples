@@ -1,0 +1,309 @@
+import sys
+import numpy
+from scipy.optimize import root
+import weno_coefficients
+
+lam = 1  # Coupling coefficient?
+
+
+def eos_abc(s2, t2, st):
+    """
+    Compute the \bar{A}, \bar{B}, \bar{C} coefficients.
+
+    Parameters
+    ----------
+
+    s2 : float
+        sigma^2, where sigma is conjugate to j (mass current)
+    t2 : float
+        Theta^2, where Theta is conjugate to s (entropy current)
+    st : float
+        sigma cdot Theta
+
+    Returns
+    -------
+
+    \bar{A}, \bar{B}, \bar{C} : float
+        Coefficients in the conversion from sigma, Theta, to j, s
+    """
+
+    coeff = numpy.pi**2 * numpy.sqrt(3) / 135
+
+    Abar = 4 * coeff * st / s2 * (t2 + 2 * st**2 / s2)
+    Bbar = s2 / lam - 4 * coeff * (st / s2)**2 * (t2 + 2 * st**2 / s2)
+    Cbar = coeff * (2 * t2 + 4 * st**2 / s2)
+
+    return Abar, Bbar, Cbar
+
+
+def c2p(q, guess):
+    """
+    Go from evolved variables q = (j^t, s^t, sigma_i, Theta_i) to all
+    variables w = (j^a, a^a, sigma_b, Theta_b)
+    """
+
+    j_t_up, s_t_up = q[0:2]
+    sigma_x, sigma_y = q[2:4]
+    Theta_x, Theta_y = q[4:6]
+
+    def root_fn(v):
+        """
+        From guesses for sigma_t, Theta_t, get j^t, s^t, compare.
+        """
+        sigma_t, Theta_t = v
+        s2 = -sigma_t**2 + sigma_x**2 + sigma_y**2
+        t2 = -Theta_t**2 + Theta_x**2 + Theta_y**2
+        st = -sigma_t*Theta_t + sigma_x*Theta_x + sigma_y*Theta_y
+        Abar, Bbar, Cbar = eos_abc(s2, t2, st)
+        j_t_hat_down = Bbar * sigma_t + Abar * Theta_t
+        s_t_hat_down = Abar * sigma_t + Cbar * Theta_t
+        j_t_hat = -j_t_hat_down
+        s_t_hat = -s_t_hat_down
+        return [j_t_up - j_t_hat, s_t_up - s_t_hat]
+
+    sol = root(root_fn, guess)
+    sigma_t, Theta_t = sol.x
+    s2 = -sigma_t**2 + sigma_x**2 + sigma_y**2
+    t2 = -Theta_t**2 + Theta_x**2 + Theta_y**2
+    st = -sigma_t*Theta_t + sigma_x*Theta_x + sigma_y*Theta_y
+    Abar, Bbar, Cbar = eos_abc(s2, t2, st)
+    j_x_down = Bbar * sigma_x + Abar * Theta_x
+    s_x_down = Abar * sigma_x + Cbar * Theta_x
+    j_y_down = Bbar * sigma_y + Abar * Theta_y
+    s_y_down = Abar * sigma_y + Cbar * Theta_y
+    j_x_up = j_x_down
+    s_x_up = s_x_down
+    j_y_up = j_y_down
+    s_y_up = s_y_down
+
+    w = numpy.array([j_t_up, s_t_up, j_x_up, s_x_up, j_y_up, s_y_up,
+                     sigma_t, Theta_t, sigma_x, Theta_x, sigma_y, Theta_y])
+    return w
+
+
+class Grid1d(object):
+
+    def __init__(self, nx, ng, xmin=0.0, xmax=1.0, bc="outflow"):
+
+        self.ng = ng
+        self.nx = nx
+
+        self.xmin = xmin
+        self.xmax = xmax
+
+        self.bc = bc
+
+        # python is zero-based.  Make easy intergers to know where the
+        # real data lives
+        self.ilo = ng
+        self.ihi = ng+nx-1
+
+        # physical coords -- cell-centered, left and right edges
+        self.dx = (xmax - xmin)/(nx)
+        self.x = xmin + (numpy.arange(nx+2*ng)-ng+0.5)*self.dx
+
+        # storage for the solution
+        self.q = numpy.zeros((6, (nx+2*ng)), dtype=numpy.float64)
+        # storage for all variables
+        self.w = numpy.zeros((12, (nx+2*ng)), dtype=numpy.float64)
+
+    def scratch_array(self):
+        """ return a scratch array dimensioned for our grid """
+        return numpy.zeros((6, (self.nx+2*self.ng)), dtype=numpy.float64)
+
+    def fill_BCs(self):
+        """ fill all ghostcells as periodic """
+
+        if self.bc == "periodic":
+
+            # left boundary
+            self.q[:, 0:self.ilo] = self.q[:, self.ihi-self.ng+1:self.ihi+1]
+
+            # right boundary
+            self.q[:, self.ihi+1:] = self.q[:, self.ilo:self.ilo+self.ng]
+
+        elif self.bc == "outflow":
+
+            for n in range(self.ng):
+                # left boundary
+                self.q[:, n] = self.q[:, self.ilo]
+
+                # right boundary
+                self.q[:, self.ihi+1+n] = self.q[:, self.ihi]
+
+        else:
+            sys.exit("invalid BC")
+
+
+def weno(order, q):
+    """
+    Do WENO reconstruction
+
+    Parameters
+    ----------
+
+    order : int
+        The stencil width
+    q : numpy array
+        Scalar data to reconstruct
+
+    Returns
+    -------
+
+    qL : numpy array
+        Reconstructed data - boundary points are zero
+    """
+    C = weno_coefficients.C_all[order]
+    a = weno_coefficients.a_all[order]
+    sigma = weno_coefficients.sigma_all[order]
+
+    qL = numpy.zeros_like(q)
+    beta = numpy.zeros((order, q.shape[1]))
+    w = numpy.zeros_like(beta)
+    np = q.shape[1] - 2 * order
+    epsilon = 1e-16
+    for nv in range(3):
+        for i in range(order, np+order):
+            q_stencils = numpy.zeros(order)
+            alpha = numpy.zeros(order)
+            for k in range(order):
+                for l in range(order):
+                    for m in range(l+1):
+                        beta[k, i] += (sigma[k, l, m] * q[nv, i+k-l] *
+                                       q[nv, i+k-m])
+                alpha[k] = C[k] / (epsilon + abs(beta[k, i])**order)
+                for l in range(order):
+                    q_stencils[k] += a[k, l] * q[nv, i+k-l]
+            w[:, i] = alpha / numpy.sum(alpha)
+            qL[nv, i] = numpy.dot(w[:, i], q_stencils)
+
+    return qL
+
+
+class WENOSimulation(object):
+
+    def __init__(self, grid, C=0.5, weno_order=3):
+        self.grid = grid
+        self.t = 0.0  # simulation time
+        self.C = C    # CFL number
+        self.weno_order = weno_order
+
+    def init_cond(self, type="const"):
+        if type == "const":
+            self.grid.q = 0
+            self.grid.q[0] = numpy.ones_like(self.grid.x)
+            self.grid.q[1] = numpy.ones_like(self.grid.x)
+
+    def max_lambda(self):
+        return 1
+
+    def timestep(self):
+        return self.C * self.grid.dx / self.max_lambda()
+
+    def superfluid_flux(self, q, w):
+        flux = numpy.zeros_like(q)
+#        jt = w[0, :]
+#        st = w[1, :]
+        jx = w[2, :]
+        sx = w[3, :]
+#        jy = w[4, :]
+#        sy = w[5, :]
+        sigmat = w[6, :]
+#        Thetat = w[7, :]
+#        sigmax = w[8, :]
+#        Thetax = w[9, :]
+#        sigmay = w[10, :]
+#        Thetay = w[11, :]
+
+        flux[0, :] = jx
+        flux[1, :] = sx
+        flux[4, :] = -sigmat
+        return flux
+
+    def rk_substep(self):
+
+        g = self.grid
+        g.fill_BCs()
+        f = self.euler_flux(g.q)
+        alpha = self.max_lambda()
+        fp = (f + alpha * g.q) / 2
+        fm = (f - alpha * g.q) / 2
+        fpr = g.scratch_array()
+        fml = g.scratch_array()
+        flux = g.scratch_array()
+        fpr[:, 1:] = weno(self.weno_order, fp[:, :-1])
+        fml[:, -1::-1] = weno(self.weno_order, fm[:, -1::-1])
+        flux[:, 1:-1] = fpr[:, 1:-1] + fml[:, 1:-1]
+        rhs = g.scratch_array()
+        rhs[:, 1:-1] = 1/g.dx * (flux[:, 1:-1] - flux[:, 2:])
+        return rhs
+
+    def rk_substep_characteristic(self):
+        """
+        There is a major issue with the way that I've set up the weno
+        function that means the code below requires the number of ghostzones
+        to be weno_order+2, not just weno_order+1. This should not be needed,
+        but I am too lazy to modify every weno routine to remove the extra,
+        not required, point.
+
+        The results aren't symmetric, so I'm not 100% convinced this is right.
+        """
+
+        g = self.grid
+        g.fill_BCs()
+        f = self.euler_flux(g.q)
+        w_o = self.weno_order
+        alpha = self.max_lambda()
+        fp = (f + alpha * g.q) / 2
+        fm = (f - alpha * g.q) / 2
+        char_fm = g.scratch_array()
+        char_fp = g.scratch_array()
+        fpr = g.scratch_array()
+        fml = g.scratch_array()
+        flux = g.scratch_array()
+        for i in range(g.ilo, g.ihi+2):
+            boundary_state = (g.q[:, i-1] + g.q[:, i]) / 2
+            revecs, levecs = self.evecs(boundary_state)
+            for j in range(i-w_o-1, i+w_o+2):
+                char_fm[:, j] = numpy.dot(fm[:, j], levecs)
+                char_fp[:, j] = numpy.dot(fp[:, j], levecs)
+            fpr[:, i-w_o:i+w_o+2] = weno(self.weno_order,
+                                         char_fp[:, i-w_o-1:i+w_o+1])
+            fml[:, i+w_o+1:i-w_o-1:-1] = weno(self.weno_order,
+                                              char_fm[:, i+w_o+1:i-w_o-1:-1])
+            flux[:, i] = numpy.dot(revecs, fpr[:, i] + fml[:, i])
+        rhs = g.scratch_array()
+        rhs[:, 1:-1] = 1/g.dx * (flux[:, 1:-1] - flux[:, 2:])
+        return rhs
+
+    def evolve(self, tmax, reconstruction='componentwise'):
+        """ evolve the Euler equation using RK4 """
+        self.t = 0.0
+        g = self.grid
+
+        stepper = self.rk_substep
+        if reconstruction == 'characteristic':
+            stepper = self.rk_substep_characteristic
+
+        # main evolution loop
+        while self.t < tmax:
+
+            # fill the boundary conditions
+            g.fill_BCs()
+
+            # get the timestep
+            dt = self.timestep()
+
+            if self.t + dt > tmax:
+                dt = tmax - self.t
+
+            # RK3: this is SSP
+            # Store the data at the start of the step
+            q_start = g.q.copy()
+            q1 = q_start + dt * stepper()
+            g.q[:, :] = q1[:, :]
+            q2 = (3 * q_start + q1 + dt * stepper()) / 4
+            g.q[:, :] = q2[:, :]
+            g.q = (q_start + 2 * q2 + 2 * dt * stepper()) / 3
+
+            self.t += dt
