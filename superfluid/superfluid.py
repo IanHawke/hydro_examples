@@ -221,7 +221,7 @@ class WENOSimulation(object):
         return flux
 
     def rk_substep(self):
-
+        """RHS terms"""
         g = self.grid
         g.fill_BCs()
         f = self.euler_flux(g.q)
@@ -234,56 +234,25 @@ class WENOSimulation(object):
         fpr[:, 1:] = weno(self.weno_order, fp[:, :-1])
         fml[:, -1::-1] = weno(self.weno_order, fm[:, -1::-1])
         flux[:, 1:-1] = fpr[:, 1:-1] + fml[:, 1:-1]
-        rhs = g.scratch_array()
-        rhs[:, 1:-1] = 1/g.dx * (flux[:, 1:-1] - flux[:, 2:])
-        return rhs
-
-    def rk_substep_characteristic(self):
-        """
-        There is a major issue with the way that I've set up the weno
-        function that means the code below requires the number of ghostzones
-        to be weno_order+2, not just weno_order+1. This should not be needed,
-        but I am too lazy to modify every weno routine to remove the extra,
-        not required, point.
-
-        The results aren't symmetric, so I'm not 100% convinced this is right.
-        """
-
-        g = self.grid
-        g.fill_BCs()
-        f = self.euler_flux(g.q)
-        w_o = self.weno_order
-        alpha = self.max_lambda()
-        fp = (f + alpha * g.q) / 2
-        fm = (f - alpha * g.q) / 2
-        char_fm = g.scratch_array()
-        char_fp = g.scratch_array()
-        fpr = g.scratch_array()
-        fml = g.scratch_array()
-        flux = g.scratch_array()
-        for i in range(g.ilo, g.ihi+2):
-            boundary_state = (g.q[:, i-1] + g.q[:, i]) / 2
-            revecs, levecs = self.evecs(boundary_state)
-            for j in range(i-w_o-1, i+w_o+2):
-                char_fm[:, j] = numpy.dot(fm[:, j], levecs)
-                char_fp[:, j] = numpy.dot(fp[:, j], levecs)
-            fpr[:, i-w_o:i+w_o+2] = weno(self.weno_order,
-                                         char_fp[:, i-w_o-1:i+w_o+1])
-            fml[:, i+w_o+1:i-w_o-1:-1] = weno(self.weno_order,
-                                              char_fm[:, i+w_o+1:i-w_o-1:-1])
-            flux[:, i] = numpy.dot(revecs, fpr[:, i] + fml[:, i])
+        # --- WARNING!!! ---
+        # Terms with no fluxes (Theta, sigma_y) will pick up diffusive
+        # pieces from the L-F term, so set to zero by hand
+        flux[2:4, :] = 0  # Theta_x, y
+        flux[5, :] = 0    # sigma_y
+        # --- END OF HACK ---
         rhs = g.scratch_array()
         rhs[:, 1:-1] = 1/g.dx * (flux[:, 1:-1] - flux[:, 2:])
         return rhs
 
     def evolve(self, tmax, reconstruction='componentwise'):
-        """ evolve the Euler equation using RK4 """
+        """ evolve the Euler equation using RK3 """
         self.t = 0.0
         g = self.grid
 
         stepper = self.rk_substep
         if reconstruction == 'characteristic':
-            stepper = self.rk_substep_characteristic
+            raise NotImplementedError
+#            stepper = self.rk_substep_characteristic
 
         # main evolution loop
         while self.t < tmax:
