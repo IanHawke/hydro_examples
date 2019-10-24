@@ -238,6 +238,11 @@ class WENOSFSimulation(object):
                                   1e-3 * numpy.sin(2*period*self.grid.x))
             self.grid.q[4, :] += (1e-2 * numpy.ones_like(self.grid.x) +
                                   1e-3 * numpy.sin(3*period*self.grid.x))
+        elif type == "tophat0":
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = 0.1 * numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = 0.1 * numpy.ones_like(self.grid.x)
+            self.grid.q[0, numpy.abs(self.grid.x) < 0.2] = 0.2
 
     def max_lambda(self):
         return 1
@@ -365,7 +370,7 @@ class WENOSFSimulation(object):
         D_m = g.scratch_array()
         D_p = g.scratch_array()
         for i in range(g.ilo-1, g.ihi+1):
-            D_m[:, i], D_p[:, i] = self.HLL(qpr[:, i-1], qml[:, i])
+            D_m[:, i], D_p[:, i] = self.HLL(qpr[:, i], qml[:, i])
             # CHECK:
             # Should there be a B delta Q term here?
         rhs[:, 1:-1] -= 1/g.dx * (D_m[:, 2:] + D_p[:, 1:-1])
@@ -420,29 +425,30 @@ if __name__ == "__main__":
 #    s = WENOSFSimulation(g, C, order)
 #    s.init_cond()
 #    s.evolve(tmax)
-    order = 3
-    xmin = -0.5
-    xmax = 0.5
-    nx = 64
-    tmax = 1e-1
-    C = 0.5
-    ng = order+2
-    g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
-    s = WENOSFSimulation(g, C, order)
-    s.init_cond("sine4")
-    s.evolve(tmax)
-    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
-    labels=[r"$j^t$", r"$s^j$", r"$\Theta_x$", r"$\Theta_y$",
-            r"$\sigma_x$", r"$\sigma_y$"]
-    for r in range(3):
-        for c in range(2):
-            ax = axes[r, c]
-            i = 2*r+c
-            ax.plot(g.x, g.q[i, :])
-            ax.set_xlim(g.xmin, g.xmax)
-            ax.set_ylabel(labels[i])
-    fig.tight_layout()
-    pyplot.show()
+
+#    order = 3
+#    xmin = -0.5
+#    xmax = 0.5
+#    nx = 64
+#    tmax = 1e-1
+#    C = 0.5
+#    ng = order+2
+#    g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
+#    s = WENOSFSimulation(g, C, order)
+#    s.init_cond("sine4")
+#    s.evolve(tmax)
+#    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
+#    labels=[r"$j^t$", r"$s^t$", r"$\Theta_x$", r"$\Theta_y$",
+#            r"$\sigma_x$", r"$\sigma_y$"]
+#    for r in range(3):
+#        for c in range(2):
+#            ax = axes[r, c]
+#            i = 2*r+c
+#            ax.plot(g.x, g.q[i, :])
+#            ax.set_xlim(g.xmin, g.xmax)
+#            ax.set_ylabel(labels[i])
+#    fig.tight_layout()
+#    pyplot.show()
     
 #    order = 3
 #    xmin = -0.5
@@ -456,7 +462,7 @@ if __name__ == "__main__":
 #    s.init_cond("sine4")
 #    s.evolve(tmax)
 #    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
-#    labels=[r"$j^t$", r"$s^j$", r"$\Theta_x$", r"$\Theta_y$",
+#    labels=[r"$j^t$", r"$s^t$", r"$\Theta_x$", r"$\Theta_y$",
 #            r"$\sigma_x$", r"$\sigma_y$"]
 #    for r in range(3):
 #        for c in range(2):
@@ -468,6 +474,46 @@ if __name__ == "__main__":
 #    fig.tight_layout()
 #    pyplot.show()
     
+#    order = 3
+#    xmin = -0.5
+#    xmax = 0.5
+#    nx = 64
+#    tmax = 1e-1
+#    C = 0.5
+#    ng = order+2
+#    g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
+#    s = WENOSFSimulation(g, C, order)
+#    s.init_cond("sine_const")
+#    s.evolve(tmax)
+#    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
+#    labels=[r"$j^t$", r"$s^t$", r"$\Theta_x$", r"$\Theta_y$",
+#            r"$\sigma_x$", r"$\sigma_y$"]
+#    for r in range(3):
+#        for c in range(2):
+#            ax = axes[r, c]
+#            i = 2*r+c
+#            ax.plot(g.x, g.q[i, :])
+#            ax.set_xlim(g.xmin, g.xmax)
+#            ax.set_ylabel(labels[i])
+#    fig.tight_layout()
+#    pyplot.show()
+#    for i in range(g.ilo-1, g.ihi+2):
+#        g.w[:, i] = c2p(g.q[:, i], s.guess)
+#    fig, axes = pyplot.subplots(6, 2, figsize=(10, 20))
+#    labels=[r"$j^t$", r"$s^t$", r"$j^x$", r"$s^x$", r"$j^y$", r"$s^y$",
+#            r"$\Theta_t$", r"$\Theta_t$", r"$\Theta_x$", r"$\Theta_y$",
+#            r"$\sigma_x$", r"$\sigma_y$"]
+#    for r in range(6):
+#        for c in range(2):
+#            ax = axes[r, c]
+#            i = 2*r+c
+#            ax.plot(g.x[g.ilo-1:g.ihi+2], g.w[i, g.ilo-1:g.ihi+2])
+#            ax.set_xlim(g.xmin, g.xmax)
+#            ax.set_ylabel(labels[i])
+#    fig.tight_layout()
+#    pyplot.show()
+#    
+    
     order = 3
     xmin = -0.5
     xmax = 0.5
@@ -477,16 +523,31 @@ if __name__ == "__main__":
     ng = order+2
     g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
     s = WENOSFSimulation(g, C, order)
-    s.init_cond("sine_const")
+    s.init_cond("tophat0")
     s.evolve(tmax)
     fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
-    labels=[r"$j^t$", r"$s^j$", r"$\Theta_x$", r"$\Theta_y$",
+    labels=[r"$j^t$", r"$s^t$", r"$\Theta_x$", r"$\Theta_y$",
             r"$\sigma_x$", r"$\sigma_y$"]
     for r in range(3):
         for c in range(2):
             ax = axes[r, c]
             i = 2*r+c
             ax.plot(g.x, g.q[i, :])
+            ax.set_xlim(g.xmin, g.xmax)
+            ax.set_ylabel(labels[i])
+    fig.tight_layout()
+    pyplot.show()
+    for i in range(g.ilo-1, g.ihi+2):
+        g.w[:, i] = c2p(g.q[:, i], s.guess)
+    fig, axes = pyplot.subplots(6, 2, figsize=(10, 20))
+    labels=[r"$j^t$", r"$s^t$", r"$j^x$", r"$s^x$", r"$j^y$", r"$s^y$",
+            r"$\Theta_t$", r"$\Theta_t$", r"$\Theta_x$", r"$\Theta_y$",
+            r"$\sigma_x$", r"$\sigma_y$"]
+    for r in range(6):
+        for c in range(2):
+            ax = axes[r, c]
+            i = 2*r+c
+            ax.plot(g.x[g.ilo-1:g.ihi+2], g.w[i, g.ilo-1:g.ihi+2])
             ax.set_xlim(g.xmin, g.xmax)
             ax.set_ylabel(labels[i])
     fig.tight_layout()
