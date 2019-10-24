@@ -1,8 +1,10 @@
 import sys
 import numpy
 from scipy.optimize import root
-from scipy.integrate import quad
+#from scipy.integrate import quad
 import weno_coefficients
+
+from matplotlib import pyplot
 
 lam = 0.05  # Coupling coefficient. Larger value from Alford et al 2014
 
@@ -197,6 +199,45 @@ class WENOSFSimulation(object):
             self.grid.q[:, :] = 0
             self.grid.q[0, :] = numpy.ones_like(self.grid.x)
             self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+        elif type == "sine0":
+            period = 2*numpy.pi/(self.grid.xmax - self.grid.xmin)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[0, :] += 1e-2 * numpy.sin(period*self.grid.x)
+        elif type == "sine1":
+            period = 2*numpy.pi/(self.grid.xmax - self.grid.xmin)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] += 1e-2 * numpy.sin(period*self.grid.x)
+        elif type == "sine2":
+            period = 2*numpy.pi/(self.grid.xmax - self.grid.xmin)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[2, :] += 1e-2 * numpy.sin(period*self.grid.x)
+        elif type == "sine3":
+            period = 2*numpy.pi/(self.grid.xmax - self.grid.xmin)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[3, :] += 1e-2 * numpy.sin(period*self.grid.x)
+        elif type == "sine4":
+            period = 2*numpy.pi/(self.grid.xmax - self.grid.xmin)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[4, :] += 1e-2 * numpy.sin(period*self.grid.x)
+        elif type == "sine_const":
+            period = 2*numpy.pi/(self.grid.xmax - self.grid.xmin)
+            self.grid.q[:, :] = 0
+            self.grid.q[0, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[1, :] = numpy.ones_like(self.grid.x)
+            self.grid.q[2, :] += (1e-2 * numpy.ones_like(self.grid.x) +
+                                  1e-3 * numpy.sin(2*period*self.grid.x))
+            self.grid.q[4, :] += (1e-2 * numpy.ones_like(self.grid.x) +
+                                  1e-3 * numpy.sin(3*period*self.grid.x))
 
     def max_lambda(self):
         return 1
@@ -362,19 +403,92 @@ class WENOSFSimulation(object):
             g.q = (q_start + 2 * q2 + 2 * dt * stepper()) / 3
 
             self.t += dt
+            print(self.t)
         # Fill the BCs to finish
         g.fill_BCs()
 
 
 if __name__ == "__main__":
+#    order = 3
+#    xmin = -0.5
+#    xmax = 0.5
+#    nx = 64
+#    tmax = 1e-1
+#    C = 0.5
+#    ng = order+2
+#    g = Grid1d(nx, ng, xmin, xmax)
+#    s = WENOSFSimulation(g, C, order)
+#    s.init_cond()
+#    s.evolve(tmax)
     order = 3
     xmin = -0.5
     xmax = 0.5
-    nx = 16
-    tmax = 1e-5
+    nx = 64
+    tmax = 1e-1
     C = 0.5
     ng = order+2
-    g = Grid1d(nx, ng, xmin, xmax)
+    g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
     s = WENOSFSimulation(g, C, order)
-    s.init_cond()
+    s.init_cond("sine4")
     s.evolve(tmax)
+    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
+    labels=[r"$j^t$", r"$s^j$", r"$\Theta_x$", r"$\Theta_y$",
+            r"$\sigma_x$", r"$\sigma_y$"]
+    for r in range(3):
+        for c in range(2):
+            ax = axes[r, c]
+            i = 2*r+c
+            ax.plot(g.x, g.q[i, :])
+            ax.set_xlim(g.xmin, g.xmax)
+            ax.set_ylabel(labels[i])
+    fig.tight_layout()
+    pyplot.show()
+    
+#    order = 3
+#    xmin = -0.5
+#    xmax = 0.5
+#    nx = 128
+#    tmax = 2e-1
+#    C = 0.5
+#    ng = order+2
+#    g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
+#    s = WENOSFSimulation(g, C, order)
+#    s.init_cond("sine4")
+#    s.evolve(tmax)
+#    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
+#    labels=[r"$j^t$", r"$s^j$", r"$\Theta_x$", r"$\Theta_y$",
+#            r"$\sigma_x$", r"$\sigma_y$"]
+#    for r in range(3):
+#        for c in range(2):
+#            ax = axes[r, c]
+#            i = 2*r+c
+#            ax.plot(g.x, g.q[i, :])
+#            ax.set_xlim(g.xmin, g.xmax)
+#            ax.set_ylabel(labels[i])
+#    fig.tight_layout()
+#    pyplot.show()
+    
+    order = 3
+    xmin = -0.5
+    xmax = 0.5
+    nx = 64
+    tmax = 1e-1
+    C = 0.5
+    ng = order+2
+    g = Grid1d(nx, ng, xmin, xmax, bc="periodic")
+    s = WENOSFSimulation(g, C, order)
+    s.init_cond("sine_const")
+    s.evolve(tmax)
+    fig, axes = pyplot.subplots(3, 2, figsize=(10, 10))
+    labels=[r"$j^t$", r"$s^j$", r"$\Theta_x$", r"$\Theta_y$",
+            r"$\sigma_x$", r"$\sigma_y$"]
+    for r in range(3):
+        for c in range(2):
+            ax = axes[r, c]
+            i = 2*r+c
+            ax.plot(g.x, g.q[i, :])
+            ax.set_xlim(g.xmin, g.xmax)
+            ax.set_ylabel(labels[i])
+    fig.tight_layout()
+    pyplot.show()
+    
